@@ -1,5 +1,5 @@
 name: Plan@Home Fleet Agent
-version: "0.1.0"
+version: "0.1.1"
 slug: planhome_fleet_agent
 description: Secure outbound monitoring agent for Plan@Home Fleetmanager
 url: https://fleet.plan-home.de
