@@ -5,7 +5,7 @@ import time
 import requests
 from pathlib import Path
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
