@@ -1,0 +1,7 @@
+.env
+*.env
+fleet_state.json
+options.json
+__pycache__/
+*.pyc
+*.log

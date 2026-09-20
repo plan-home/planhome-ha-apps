@@ -1,0 +1,26 @@
+name: Plan@Home Fleet Agent
+version: "0.1.0"
+slug: planhome_fleet_agent
+description: Secure outbound monitoring agent for Plan@Home Fleetmanager
+url: https://fleet.plan-home.de
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: application
+boot: auto
+init: false
+hassio_api: true
+homeassistant_api: true
+hassio_role: manager
+host_network: false
+options:
+  fleet_url: https://fleet.plan-home.de
+  enrollment_code: ""
+  interval_seconds: 60
+schema:
+  fleet_url: url
+  enrollment_code: str
+  interval_seconds: int(30,3600)
+map:
+  - addon_config:rw
