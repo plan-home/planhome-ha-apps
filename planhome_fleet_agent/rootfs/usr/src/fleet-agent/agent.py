@@ -5,7 +5,7 @@ import time
 import requests
 from pathlib import Path
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -187,6 +187,25 @@ def heartbeat(cfg, state):
     )
 
 
+def command_channel(cfg, state):
+    base=cfg["fleet_url"].rstrip("/")
+    headers={"Authorization":"Bearer "+state["token"]}
+    r=requests.get(base+"/api/v1/commands/next",headers=headers,timeout=20)
+    r.raise_for_status(); cmd=r.json().get("command")
+    if not cmd:return
+    cid=cmd.get("id"); ctype=cmd.get("type")
+    # 0.1.3 deliberately executes no privileged HA action. Only transport ping.
+    if ctype=="ping":
+        result={"agent_version":VERSION,"message":"pong"}
+        status="completed"
+    else:
+        result={"error":"command type disabled in agent 0.1.3"};status="failed"
+    ar=requests.post(base+f"/api/v1/commands/{cid}/ack",headers=headers,
+        json={"status":status,"result":result},timeout=20)
+    ar.raise_for_status()
+    print(f"Command {ctype} {cid}: {status}",flush=True)
+
+
 while True:
     try:
         cfg = loadcfg()
@@ -194,6 +213,7 @@ while True:
 
         if state.get("token"):
             heartbeat(cfg, state)
+            command_channel(cfg, state)
 
     except Exception as e:
         print("fleet-agent:", repr(e), flush=True)
