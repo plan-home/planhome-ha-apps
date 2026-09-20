@@ -5,7 +5,7 @@ import time
 import requests
 from pathlib import Path
 
-VERSION = "0.1.3"
+VERSION = "0.2.0"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -143,6 +143,7 @@ def collect_updates(core, sup, osinfo, addons):
                     "name": addon.get("name") or addon.get("slug") or "App",
                     "installed": str(addon.get("version") or ""),
                     "latest": str(addon.get("version_latest") or ""),
+                    "slug": addon.get("slug") or "",
                 })
 
     return items
@@ -153,8 +154,13 @@ def heartbeat(cfg, state):
     sup = get("/supervisor/info")
     osinfo = get("/os/info")
     addons = get("/addons")
+    backups = get("/backups/info")
+    resolution = get("/resolution/info")
 
     update_items = collect_updates(core, sup, osinfo, addons)
+    backup_rows = backups.get("backups",[]) if isinstance(backups,dict) else []
+    backup_dates = sorted([str(b.get("date")) for b in backup_rows if b.get("date")], reverse=True)
+    issues = resolution.get("issues",[]) if isinstance(resolution,dict) else []
 
     payload = {
         "agent_version": VERSION,
@@ -166,6 +172,14 @@ def heartbeat(cfg, state):
         "cpu": cpu_usage(),
         "memory": memory_usage(),
         "disk": disk_usage(),
+        "backup_count": len(backup_rows),
+        "backup_last_at": backup_dates[0] if backup_dates else None,
+        "repair_count": len(issues),
+        "diagnostics": {
+            "unsupported": resolution.get("unsupported",[]) if isinstance(resolution,dict) else [],
+            "unhealthy": resolution.get("unhealthy",[]) if isinstance(resolution,dict) else [],
+            "issues": issues[:25],
+        },
     }
 
     r = requests.post(
@@ -187,21 +201,51 @@ def heartbeat(cfg, state):
     )
 
 
+def sup_post(path, payload=None, timeout=1800):
+    r=requests.post(SUP+path,headers=H,json=payload or {},timeout=timeout)
+    r.raise_for_status()
+    try:
+        data=r.json()
+        if data.get("result") not in (None,"ok"):
+            raise RuntimeError(data.get("message") or data)
+        return data.get("data",data)
+    except ValueError:
+        return {"http_status":r.status_code}
+
 def command_channel(cfg, state):
     base=cfg["fleet_url"].rstrip("/")
     headers={"Authorization":"Bearer "+state["token"]}
     r=requests.get(base+"/api/v1/commands/next",headers=headers,timeout=20)
     r.raise_for_status(); cmd=r.json().get("command")
     if not cmd:return
-    cid=cmd.get("id"); ctype=cmd.get("type")
-    # 0.1.3 deliberately executes no privileged HA action. Only transport ping.
-    if ctype=="ping":
-        result={"agent_version":VERSION,"message":"pong"}
-        status="completed"
-    else:
-        result={"error":"command type disabled in agent 0.1.3"};status="failed"
+    cid=cmd.get("id"); ctype=cmd.get("type"); payload=cmd.get("payload") or {}
+    status="completed"; result={"agent_version":VERSION}
+    try:
+        if ctype=="ping":
+            result["message"]="pong"
+        elif ctype=="backup_full":
+            name="Plan@Home Fleet "+time.strftime("%Y-%m-%d %H:%M")
+            result["backup"]=sup_post("/backups/new/full",{"name":name,"compressed":True,"background":False},1800)
+        elif ctype=="core_restart":
+            result["restart"]=sup_post("/core/restart",{},120)
+        elif ctype=="maintenance_update":
+            kind=payload.get("kind"); version=str(payload.get("version") or ""); slug=str(payload.get("slug") or "")
+            if kind not in ("core","app") or not version:
+                raise ValueError("invalid update payload")
+            name="Plan@Home Fleet pre-update "+time.strftime("%Y-%m-%d %H:%M")
+            result["backup"]=sup_post("/backups/new/full",{"name":name,"compressed":True,"background":False},1800)
+            if kind=="core":
+                result["update"]=sup_post("/core/update",{"version":version,"backup":False},1800)
+            else:
+                if not slug or "/" in slug or ".." in slug: raise ValueError("invalid app slug")
+                result["update"]=sup_post("/store/addons/"+slug+"/update",{"backup":False,"background":False},1800)
+            result["target"]={"kind":kind,"version":version,"slug":slug}
+        else:
+            raise ValueError("command type disabled")
+    except Exception as e:
+        status="failed"; result["error"]=repr(e)[:2000]
     ar=requests.post(base+f"/api/v1/commands/{cid}/ack",headers=headers,
-        json={"status":status,"result":result},timeout=20)
+        json={"status":status,"result":result},timeout=30)
     ar.raise_for_status()
     print(f"Command {ctype} {cid}: {status}",flush=True)
 
