@@ -3,9 +3,10 @@ import os
 import shutil
 import time
 import requests
+import re
 from pathlib import Path
 
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -82,6 +83,25 @@ def collect_ha_updates():
         if not release_url.startswith(("https://", "http://")):
             release_url = ""
 
+        picture = str(attrs.get("entity_picture") or "")
+        integration = ""
+        match = re.search(r"/integration/([^/]+)/", picture)
+        if not match:
+            match = re.search(r"/_/([^/]+)/", picture)
+        if match:
+            integration = match.group(1).strip().lower()
+
+        integration_names = {
+            "hacs": "HACS",
+            "esphome": "ESPHome",
+            "shelly": "Shelly",
+            "unifi": "UniFi",
+        }
+        integration_name = integration_names.get(
+            integration,
+            integration.replace("_", " ").title() if integration else "Home Assistant",
+        )
+
         items.append({
             "type": "ha_update",
             "name": str(attrs.get("friendly_name") or entity_id),
@@ -89,6 +109,8 @@ def collect_ha_updates():
             "latest": str(latest),
             "entity_id": entity_id,
             "category": str(attrs.get("device_class") or "integration"),
+            "integration": integration,
+            "integration_name": integration_name,
             "release_url": release_url[:1000],
         })
 
