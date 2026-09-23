@@ -5,7 +5,7 @@ import time
 import requests
 from pathlib import Path
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -25,6 +25,74 @@ def get(path):
     except Exception as e:
         print(f"Supervisor GET {path}: {e!r}", flush=True)
         return {}
+
+
+
+def ha_get(path):
+    try:
+        r = requests.get(
+            SUP + "/core/api" + path,
+            headers=H,
+            timeout=20,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        print(f"Home Assistant API GET {path}: {e!r}", flush=True)
+        return []
+
+
+def collect_ha_updates():
+    states = ha_get("/states")
+
+    if not isinstance(states, list):
+        return []
+
+    items = []
+
+    system_ids = {
+        "update.home_assistant_core_update",
+        "update.home_assistant_operating_system_update",
+        "update.home_assistant_supervisor_update",
+    }
+
+    for row in states:
+        if not isinstance(row, dict):
+            continue
+
+        entity_id = str(row.get("entity_id") or "")
+
+        if not entity_id.startswith("update."):
+            continue
+
+        if entity_id in system_ids:
+            continue
+
+        # HA ist maßgeblich: nur state=on bedeutet Update verfügbar.
+        if str(row.get("state") or "").lower() != "on":
+            continue
+
+        attrs = row.get("attributes") or {}
+        latest = attrs.get("latest_version")
+
+        if not latest:
+            continue
+
+        release_url = str(attrs.get("release_url") or "")
+        if not release_url.startswith(("https://", "http://")):
+            release_url = ""
+
+        items.append({
+            "type": "ha_update",
+            "name": str(attrs.get("friendly_name") or entity_id),
+            "installed": str(attrs.get("installed_version") or ""),
+            "latest": str(latest),
+            "entity_id": entity_id,
+            "category": str(attrs.get("device_class") or "integration"),
+            "release_url": release_url[:1000],
+        })
+
+    return items
 
 
 def loadcfg():
@@ -146,6 +214,7 @@ def heartbeat(cfg, state):
     resolution = get("/resolution/info")
 
     update_items = collect_updates(core, sup, osinfo, addons)
+    update_items.extend(collect_ha_updates())
     backup_rows = backups.get("backups",[]) if isinstance(backups,dict) else []
     backup_dates = sorted([str(b.get("date")) for b in backup_rows if b.get("date")], reverse=True)
     issues = resolution.get("issues",[]) if isinstance(resolution,dict) else []
