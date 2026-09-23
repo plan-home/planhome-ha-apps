@@ -5,7 +5,7 @@ import time
 import requests
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -105,8 +105,13 @@ def disk_usage():
 def collect_updates(core, sup, osinfo, addons):
     items = []
 
-    def add(kind, name, installed, latest):
-        if installed and latest and installed != latest:
+    def add_supervisor_update(kind, name, info):
+        # Supervisor is authoritative: version_latest alone is not an offered update.
+        if not isinstance(info, dict) or info.get("update_available") is not True:
+            return
+        installed = info.get("version")
+        latest = info.get("version_latest")
+        if installed and latest:
             items.append({
                 "type": kind,
                 "name": name,
@@ -114,30 +119,13 @@ def collect_updates(core, sup, osinfo, addons):
                 "latest": str(latest),
             })
 
-    add(
-        "core",
-        "Home Assistant Core",
-        core.get("version"),
-        core.get("version_latest"),
-    )
-
-    add(
-        "supervisor",
-        "Supervisor",
-        sup.get("version"),
-        sup.get("version_latest"),
-    )
-
-    add(
-        "os",
-        "Home Assistant OS",
-        osinfo.get("version"),
-        osinfo.get("version_latest"),
-    )
+    add_supervisor_update("core", "Home Assistant Core", core)
+    add_supervisor_update("supervisor", "Supervisor", sup)
+    add_supervisor_update("os", "Home Assistant OS", osinfo)
 
     if isinstance(addons, dict):
         for addon in addons.get("addons", []):
-            if addon.get("update_available"):
+            if addon.get("update_available") is True:
                 items.append({
                     "type": "app",
                     "name": addon.get("name") or addon.get("slug") or "App",
