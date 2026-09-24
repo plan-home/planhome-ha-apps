@@ -6,7 +6,7 @@ import requests
 import re
 from pathlib import Path
 
-VERSION = "0.2.5"
+VERSION = "0.2.6"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -73,11 +73,17 @@ def validate_update_entity(entity_id, expected_version):
 
 def install_ha_update(entity_id, version, timeout=900):
     before = validate_update_entity(entity_id, version)
-    response = ha_post("/services/update/install", {
-        "entity_id": entity_id,
-        "version": version,
-        "backup": False,
-    }, 120)
+    attrs = before.get("attributes") or {}
+    supported_features = int(attrs.get("supported_features") or 0)
+
+    # update.install only accepts a version when the entity advertises
+    # UpdateEntityFeature.SPECIFIC_VERSION (bit 2). Shelly firmware update
+    # entities typically support INSTALL + PROGRESS, but not SPECIFIC_VERSION.
+    payload = {"entity_id": entity_id}
+    if supported_features & 2:
+        payload["version"] = version
+
+    response = ha_post("/services/update/install", payload, 120)
     deadline = time.monotonic() + timeout
     last = before
     while time.monotonic() < deadline:
@@ -382,6 +388,7 @@ def command_channel(cfg, state):
             raise ValueError("command type disabled")
     except Exception as e:
         status="failed"; result["error"]=repr(e)[:2000]
+        print(f"Command {ctype} {cid} error: {result['error']}", flush=True)
     ar=requests.post(base+f"/api/v1/commands/{cid}/ack",headers=headers,
         json={"status":status,"result":result},timeout=30)
     ar.raise_for_status()
