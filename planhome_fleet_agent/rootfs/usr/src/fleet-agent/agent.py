@@ -6,7 +6,7 @@ import requests
 import re
 from pathlib import Path
 
-VERSION = "0.2.4"
+VERSION = "0.2.5"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -368,8 +368,7 @@ def command_channel(cfg, state):
                 raise ValueError("invalid update payload")
             if kind=="ha_update":
                 validate_update_entity(entity_id, version)
-            name="Plan@Home Fleet pre-update "+time.strftime("%Y-%m-%d %H:%M")
-            result["backup"]=sup_post("/backups/new/full",{"name":name,"compressed":True,"background":False},1800)
+            # Backups are a separate maintenance action. Updates do not create a full backup automatically.
             if kind=="core":
                 result["update"]=sup_post("/core/update",{"version":version,"backup":False},1800)
             elif kind=="app":
