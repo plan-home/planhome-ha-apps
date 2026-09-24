@@ -6,7 +6,7 @@ import requests
 import re
 from pathlib import Path
 
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -41,6 +41,60 @@ def ha_get(path):
     except Exception as e:
         print(f"Home Assistant API GET {path}: {e!r}", flush=True)
         return []
+
+
+def ha_post(path, payload=None, timeout=120):
+    r = requests.post(
+        SUP + "/core/api" + path,
+        headers=H,
+        json=payload or {},
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    try:
+        return r.json()
+    except ValueError:
+        return {"http_status": r.status_code}
+
+
+def validate_update_entity(entity_id, expected_version):
+    if not re.fullmatch(r"update\.[a-z0-9_]+", entity_id or ""):
+        raise ValueError("invalid update entity_id")
+    row = ha_get("/states/" + entity_id)
+    if not isinstance(row, dict) or row.get("entity_id") != entity_id:
+        raise ValueError("update entity not available")
+    attrs = row.get("attributes") or {}
+    if str(row.get("state") or "").lower() != "on":
+        raise ValueError("update is no longer available")
+    if str(attrs.get("latest_version") or "") != str(expected_version or ""):
+        raise ValueError("target version changed")
+    return row
+
+
+def install_ha_update(entity_id, version, timeout=900):
+    before = validate_update_entity(entity_id, version)
+    response = ha_post("/services/update/install", {
+        "entity_id": entity_id,
+        "version": version,
+        "backup": False,
+    }, 120)
+    deadline = time.monotonic() + timeout
+    last = before
+    while time.monotonic() < deadline:
+        time.sleep(5)
+        row = ha_get("/states/" + entity_id)
+        if not isinstance(row, dict):
+            continue
+        last = row
+        attrs = row.get("attributes") or {}
+        installed = str(attrs.get("installed_version") or "")
+        state = str(row.get("state") or "").lower()
+        if installed == version and state != "on":
+            return {"service_response": response, "verified": True, "installed": installed, "state": state}
+    attrs = last.get("attributes") or {} if isinstance(last, dict) else {}
+    raise RuntimeError("update verification timeout: state=%s installed=%s latest=%s" % (
+        last.get("state") if isinstance(last, dict) else "unknown",
+        attrs.get("installed_version"), attrs.get("latest_version")))
 
 
 def collect_ha_updates():
@@ -309,16 +363,22 @@ def command_channel(cfg, state):
             result["restart"]=sup_post("/core/restart",{},120)
         elif ctype=="maintenance_update":
             kind=payload.get("kind"); version=str(payload.get("version") or ""); slug=str(payload.get("slug") or "")
-            if kind not in ("core","app") or not version:
+            entity_id=str(payload.get("entity_id") or "")
+            if kind not in ("core","app","ha_update") or not version:
                 raise ValueError("invalid update payload")
+            if kind=="ha_update":
+                validate_update_entity(entity_id, version)
             name="Plan@Home Fleet pre-update "+time.strftime("%Y-%m-%d %H:%M")
             result["backup"]=sup_post("/backups/new/full",{"name":name,"compressed":True,"background":False},1800)
             if kind=="core":
                 result["update"]=sup_post("/core/update",{"version":version,"backup":False},1800)
-            else:
+            elif kind=="app":
                 if not slug or "/" in slug or ".." in slug: raise ValueError("invalid app slug")
                 result["update"]=sup_post("/store/addons/"+slug+"/update",{"backup":False,"background":False},1800)
-            result["target"]={"kind":kind,"version":version,"slug":slug}
+            else:
+                result["update"]=install_ha_update(entity_id, version)
+                heartbeat(cfg, state)
+            result["target"]={"kind":kind,"version":version,"slug":slug,"entity_id":entity_id}
         else:
             raise ValueError("command type disabled")
     except Exception as e:
