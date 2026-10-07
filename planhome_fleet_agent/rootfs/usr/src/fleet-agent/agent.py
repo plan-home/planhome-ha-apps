@@ -6,7 +6,7 @@ import requests
 import re
 from pathlib import Path
 
-VERSION = "0.2.6"
+VERSION = "0.2.7"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -177,6 +177,24 @@ def collect_ha_updates():
     return items
 
 
+def collect_notify_targets():
+    services = ha_get("/services")
+    if not isinstance(services, list): return []
+    targets = []
+    for domain in services:
+        if not isinstance(domain, dict) or domain.get("domain") != "notify": continue
+        rows = domain.get("services") or {}
+        if not isinstance(rows, dict): continue
+        for service, meta in rows.items():
+            if not re.fullmatch(r"mobile_app_[a-z0-9_]+", str(service or "")): continue
+            targets.append({"service": service, "name": str((meta or {}).get("name") or service).strip()[:120]})
+    return sorted(targets, key=lambda x: x["name"].lower())
+
+def validate_notify_target(service):
+    if not re.fullmatch(r"mobile_app_[a-z0-9_]+", service or ""): raise ValueError("invalid notify target")
+    if service not in {x["service"] for x in collect_notify_targets()}: raise ValueError("notify target not available")
+    return service
+
 def loadcfg():
     return json.loads(CFG.read_text())
 
@@ -314,6 +332,7 @@ def heartbeat(cfg, state):
         "backup_count": len(backup_rows),
         "backup_last_at": backup_dates[0] if backup_dates else None,
         "repair_count": len(issues),
+        "notify_targets": collect_notify_targets(),
         "diagnostics": {
             "unsupported": resolution.get("unsupported",[]) if isinstance(resolution,dict) else [],
             "unhealthy": resolution.get("unhealthy",[]) if isinstance(resolution,dict) else [],
@@ -367,6 +386,16 @@ def command_channel(cfg, state):
             result["backup"]=sup_post("/backups/new/full",{"name":name,"compressed":True,"background":False},1800)
         elif ctype=="core_restart":
             result["restart"]=sup_post("/core/restart",{},120)
+        elif ctype=="notify_mobile":
+            title=str(payload.get("title") or "Plan@Home")[:120]
+            message=str(payload.get("message") or "")[:2000]
+            targets=payload.get("targets") or []
+            if not message or not isinstance(targets,list) or not 1 <= len(targets) <= 25: raise ValueError("invalid notify payload")
+            sent=[]
+            for target in targets:
+                service=validate_notify_target(str(target or ""))
+                sent.append({"service":service,"response":ha_post("/services/notify/"+service,{"title":title,"message":message},60)})
+            result["sent"]=sent
         elif ctype=="maintenance_update":
             kind=payload.get("kind"); version=str(payload.get("version") or ""); slug=str(payload.get("slug") or "")
             entity_id=str(payload.get("entity_id") or "")
