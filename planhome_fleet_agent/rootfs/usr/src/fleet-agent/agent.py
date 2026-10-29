@@ -6,7 +6,7 @@ import requests
 import re
 from pathlib import Path
 
-VERSION = "0.2.7"
+VERSION = "0.2.8"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -396,16 +396,30 @@ def command_channel(cfg, state):
                 service=validate_notify_target(str(target or ""))
                 sent.append({"service":service,"response":ha_post("/services/notify/"+service,{"title":title,"message":message},60)})
             result["sent"]=sent
+        elif ctype=="repair_fix":
+            issue_id=str(payload.get("issue_id") or "")
+            if not re.fullmatch(r"[a-zA-Z0-9_-]{8,128}",issue_id):raise ValueError("invalid repair id")
+            info=get("/resolution/info")
+            if issue_id not in {str(x.get("uuid") or x.get("id") or "") for x in info.get("issues",[]) if isinstance(x,dict)}:raise ValueError("repair issue not available")
+            result["repair"]=sup_post("/resolution/issue/"+issue_id+"/fix",{},120)
         elif ctype=="maintenance_update":
             kind=payload.get("kind"); version=str(payload.get("version") or ""); slug=str(payload.get("slug") or "")
             entity_id=str(payload.get("entity_id") or "")
-            if kind not in ("core","app","ha_update") or not version:
+            if kind not in ("core","supervisor","os","app","ha_update") or not version:
                 raise ValueError("invalid update payload")
             if kind=="ha_update":
                 validate_update_entity(entity_id, version)
             # Backups are a separate maintenance action. Updates do not create a full backup automatically.
             if kind=="core":
                 result["update"]=sup_post("/core/update",{"version":version,"backup":False},1800)
+            elif kind=="supervisor":
+                info=get("/supervisor/info")
+                if info.get("update_available") is not True or str(info.get("version_latest") or "")!=version:raise ValueError("Supervisor update not available")
+                result["update"]=sup_post("/supervisor/update",{},1800)
+            elif kind=="os":
+                info=get("/os/info")
+                if info.get("update_available") is not True or str(info.get("version_latest") or "")!=version:raise ValueError("OS update not available")
+                result["update"]=sup_post("/os/update",{"version":version},1800)
             elif kind=="app":
                 if not slug or "/" in slug or ".." in slug: raise ValueError("invalid app slug")
                 result["update"]=sup_post("/store/addons/"+slug+"/update",{"backup":False,"background":False},1800)
