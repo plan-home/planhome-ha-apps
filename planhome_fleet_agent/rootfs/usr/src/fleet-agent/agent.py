@@ -6,7 +6,7 @@ import requests
 import re
 from pathlib import Path
 
-VERSION = "0.2.8"
+VERSION = "0.2.9"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -312,6 +312,11 @@ def heartbeat(cfg, state):
     addons = get("/addons")
     backups = get("/backups/info")
     resolution = get("/resolution/info")
+    ha_config = ha_get("/config")
+    if not isinstance(ha_config, dict):
+        ha_config = {}
+    local_url = ha_config.get("internal_url")
+    remote_url = ha_config.get("external_url")
 
     update_items = collect_updates(core, sup, osinfo, addons)
     update_items.extend(collect_ha_updates())
@@ -321,6 +326,8 @@ def heartbeat(cfg, state):
 
     payload = {
         "agent_version": VERSION,
+        "local_ha_url": local_url,
+        "ha_url": remote_url,
         "ha_version": core.get("version"),
         "supervisor_version": sup.get("version"),
         "os_version": osinfo.get("version"),
