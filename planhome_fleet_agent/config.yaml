@@ -1,5 +1,5 @@
 name: Plan@Home Fleet Agent
-version: "0.2.9"
+version: "0.2.10"
 slug: planhome_fleet_agent
 description: Secure outbound monitoring agent for Plan@Home Fleetmanager
 url: https://fleet.plan-home.de
@@ -17,7 +17,9 @@ options:
   fleet_url: https://fleet.plan-home.de
   enrollment_code: ""
   interval_seconds: 60
+  marketplace_warning_once: false
 schema:
   fleet_url: url
   enrollment_code: str
   interval_seconds: int(30,3600)
+  marketplace_warning_once: bool

@@ -4,9 +4,10 @@ import shutil
 import time
 import requests
 import re
+import websocket
 from pathlib import Path
 
-VERSION = "0.2.9"
+VERSION = "0.2.10"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -55,6 +56,44 @@ def ha_post(path, payload=None, timeout=120):
         return r.json()
     except ValueError:
         return {"http_status": r.status_code}
+
+
+
+def marketplace_warning_once():
+    """Accept the Marketplace notice only when the B97 operator opted in."""
+    if not TOKEN:
+        raise RuntimeError("SUPERVISOR_TOKEN unavailable")
+    ws = websocket.create_connection(
+        "ws://supervisor/core/websocket", timeout=20
+    )
+    try:
+        greeting = json.loads(ws.recv())
+        if greeting.get("type") != "auth_required":
+            raise RuntimeError("unexpected Home Assistant WebSocket greeting")
+        ws.send(json.dumps({"type": "auth", "access_token": TOKEN}))
+        if json.loads(ws.recv()).get("type") != "auth_ok":
+            raise RuntimeError("Home Assistant WebSocket authentication failed")
+
+        def command(message_id, command_type):
+            ws.send(json.dumps({"id": message_id, "type": command_type}))
+            response = json.loads(ws.recv())
+            if response.get("type") != "result" or response.get("id") != message_id:
+                raise RuntimeError("unexpected Marketplace WebSocket response")
+            if not response.get("success"):
+                error = response.get("error") or {}
+                raise RuntimeError("Marketplace %s: %s" % (
+                    command_type, str(error.get("code") or "failed")[:80]))
+            return response.get("result") or {}
+
+        info = command(1, "marketplace/info")
+        if info.get("warning_accepted") is True:
+            return "already_accepted"
+        command(2, "marketplace/warning/accept")
+        if command(3, "marketplace/info").get("warning_accepted") is not True:
+            raise RuntimeError("Marketplace warning acceptance not verified")
+        return "accepted"
+    finally:
+        ws.close()
 
 
 def validate_update_entity(entity_id, expected_version):
@@ -451,6 +490,11 @@ while True:
         state = enroll(cfg, loadstate())
 
         if state.get("token"):
+            if cfg.get("marketplace_warning_once") is True and not state.get("marketplace_warning_done"):
+                outcome = marketplace_warning_once()
+                state["marketplace_warning_done"] = True
+                savestate(state)
+                print("Marketplace warning: " + outcome, flush=True)
             heartbeat(cfg, state)
             command_channel(cfg, state)
 

@@ -12,7 +12,7 @@ LABEL io.hass.version="${BUILD_VERSION}" \
       io.hass.name="Plan@Home Fleet Agent" \
       io.hass.description="Secure outbound monitoring agent for Plan@Home Fleetmanager"
 
-RUN pip3 install --no-cache-dir requests==2.32.5
+RUN pip3 install --no-cache-dir requests==2.32.5 websocket-client==1.8.0
 
 COPY rootfs /
 
