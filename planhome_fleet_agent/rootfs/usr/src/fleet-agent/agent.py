@@ -7,7 +7,7 @@ import re
 import websocket
 from pathlib import Path
 
-VERSION = "0.2.10"
+VERSION = "0.2.11"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -490,7 +490,7 @@ while True:
         state = enroll(cfg, loadstate())
 
         if state.get("token"):
-            if cfg.get("marketplace_warning_once") is True and not state.get("marketplace_warning_done"):
+            if cfg.get("marketplace_warning_once", True) is True and not state.get("marketplace_warning_done"):
                 outcome = marketplace_warning_once()
                 state["marketplace_warning_done"] = True
                 savestate(state)
