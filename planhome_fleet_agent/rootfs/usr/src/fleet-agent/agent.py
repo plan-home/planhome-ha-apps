@@ -7,7 +7,7 @@ import re
 import websocket
 from pathlib import Path
 
-VERSION = "0.2.11"
+VERSION = "0.2.12"
 SUP = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 H = {
@@ -60,7 +60,12 @@ def ha_post(path, payload=None, timeout=120):
 
 
 def marketplace_warning_once():
-    """Accept the Marketplace notice only when the B97 operator opted in."""
+    """Accept the Marketplace notice for the agent identity when enabled."""
+    ha_config = ha_get("/config")
+    version = str(ha_config.get("version") or "") if isinstance(ha_config, dict) else ""
+    match = re.match(r"^(\d{4})\.(\d{1,2})\.", version)
+    if match and (int(match.group(1)), int(match.group(2))) < (2026, 11):
+        return "not_applicable"
     if not TOKEN:
         raise RuntimeError("SUPERVISOR_TOKEN unavailable")
     ws = websocket.create_connection(
@@ -491,10 +496,14 @@ while True:
 
         if state.get("token"):
             if cfg.get("marketplace_warning_once", True) is True and not state.get("marketplace_warning_done"):
-                outcome = marketplace_warning_once()
-                state["marketplace_warning_done"] = True
-                savestate(state)
-                print("Marketplace warning: " + outcome, flush=True)
+                try:
+                    outcome = marketplace_warning_once()
+                    if outcome in ("accepted", "already_accepted"):
+                        state["marketplace_warning_done"] = True
+                        savestate(state)
+                        print("Marketplace warning: " + outcome, flush=True)
+                except Exception as e:
+                    print("Marketplace warning check: " + repr(e)[:500], flush=True)
             heartbeat(cfg, state)
             command_channel(cfg, state)
 
